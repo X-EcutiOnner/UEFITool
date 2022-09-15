@@ -81,13 +81,17 @@ USTATUS FfsBuilder::buildCapsule(const UModelIndex & index, UByteArray & capsule
     // Rebuild or Replace
     else if (model->action(index) == Actions::Rebuild
              || model->action(index) == Actions::Replace) {
-        if (model->rowCount(index)) {
+        if (model->rowCount(index) == 0) {
+            // Use the item body as is if it has no children
+            capsule = model->body(index);
+        }
+        else {
             // Clear the supplied UByteArray
             capsule.clear();
             
             // Right now there is only one capsule image element supported
             if (model->rowCount(index) != 1) {
-                msg(usprintf("buildCapsule: building of capsules with %d items is not yet supported", model->rowCount(index)), index);
+                msg(usprintf("%s: building of capsules with %u items is not yet supported", __FUNCTION__, model->rowCount(index)), index);
                 return U_NOT_IMPLEMENTED;
             }
             
@@ -97,7 +101,7 @@ USTATUS FfsBuilder::buildCapsule(const UModelIndex & index, UByteArray & capsule
             
             // Check image type
             if (model->type(imageIndex) == Types::Image) {
-                USTATUS result = U_SUCCESS;
+                USTATUS result;
                 if (model->subtype(imageIndex) == Subtypes::IntelImage) {
                     result = buildIntelImage(imageIndex, imageData);
                 }
@@ -105,20 +109,21 @@ USTATUS FfsBuilder::buildCapsule(const UModelIndex & index, UByteArray & capsule
                     result = buildRawArea(imageIndex, imageData);
                 }
                 else {
-                    msg(UString("buildCapsule: unexpected item subtype ") + itemSubtypeToUString(model->type(imageIndex), model->subtype(imageIndex)), imageIndex);
+                    msg(usprintf("%s: unexpected item subtype ", __FUNCTION__) + itemSubtypeToUString(model->type(imageIndex), model->subtype(imageIndex)), imageIndex);
                     return U_UNKNOWN_ITEM_TYPE;
                 }
                 
                 // Check build result
                 if (result) {
-                    msg(UString("buildCapsule: building of ") + model->name(imageIndex) + UString(" failed with error ") + errorCodeToUString(result), imageIndex);
+                    msg(usprintf("%s: building of ", __FUNCTION__) + model->name(imageIndex) + UString(" failed with error ") + errorCodeToUString(result), imageIndex);
                     return result;
                 }
-                else
+                else {
                     capsule += imageData;
+                }
             }
             else {
-                msg(UString("buildCapsule: unexpected item type ") + itemTypeToUString(model->type(imageIndex)), imageIndex);
+                msg(usprintf("%s: unexpected item type ", __FUNCTION__) + itemTypeToUString(model->type(imageIndex)), imageIndex);
                 return U_UNKNOWN_ITEM_TYPE;
             }
             
@@ -126,23 +131,21 @@ USTATUS FfsBuilder::buildCapsule(const UModelIndex & index, UByteArray & capsule
             UINT32 newSize = (UINT32)capsule.size();
             UINT32 oldSize = (UINT32)model->body(index).size();
             if (newSize > oldSize) {
-                msg(usprintf("buildCapsule: new capsule size %Xh (%u) is bigger than the original %Xh (%u)", newSize, newSize, oldSize, oldSize), index);
+                msg(usprintf("%s: new capsule size %Xh (%u) is bigger than the original %Xh (%u)", __FUNCTION__, newSize, newSize, oldSize, oldSize), index);
                 return U_INVALID_CAPSULE;
             }
             else if (newSize < oldSize) {
-                msg(usprintf("buildCapsule: new capsule size %Xh (%u) is smaller than the original %Xh (%u)", newSize, newSize, oldSize, oldSize), index);
+                msg(usprintf("%s: new capsule size %Xh (%u) is smaller than the original %Xh (%u)", __FUNCTION__, newSize, newSize, oldSize, oldSize), index);
                 return U_INVALID_CAPSULE;
             }
         }
-        else
-            capsule = model->body(index);
         
         // Build successful, append header and tail
         capsule = model->header(index) + capsule + model->tail(index);
         return U_SUCCESS;
     }
     
-    msg(UString("buildCapsule: unexpected action " + actionTypeToUString(model->action(index))), index);
+    msg(usprintf("%s: unexpected action ", __FUNCTION__) + actionTypeToUString(model->action(index)), index);
     return U_NOT_IMPLEMENTED;
 }
 
@@ -164,8 +167,15 @@ USTATUS FfsBuilder::buildIntelImage(const UModelIndex & index, UByteArray & inte
     }
     // Rebuild
     else if (model->action(index) == Actions::Rebuild) {
+        // Sanity check
+        if (model->rowCount(index) == 0) {
+            msg(usprintf("%s: Intel image with no valid regions", __FUNCTION__), index);
+            return U_INVALID_REGION;
+        }
+        
         // First child will always be descriptor for this type of image, and it's read only for now
-        intelImage = model->header(index.model()->index(0, 0, index)) + model->body(index.model()->index(0, 0, index)) + model->tail(index.model()->index(0, 0, index));
+        UModelIndex descriptorRegionIndex = index.model()->index(0, 0, index);
+        intelImage = model->header(descriptorRegionIndex) + model->body(descriptorRegionIndex) + model->tail(descriptorRegionIndex);
         
         // Process other regions
         for (int i = 1; i < model->rowCount(index); i++) {
@@ -192,7 +202,7 @@ USTATUS FfsBuilder::buildIntelImage(const UModelIndex & index, UByteArray & inte
                 case Subtypes::PdrRegion:
                     result = buildRawArea(currentRegion, region);
                     if (result) {
-                        msg(UString("buildIntelImage: building of region ") + regionTypeToUString(regionType) + UString(" failed with error ") + errorCodeToUString(result), currentRegion);
+                        msg(usprintf("%s: building of region ", __FUNCTION__) + regionTypeToUString(regionType) + UString(" failed with error ") + errorCodeToUString(result), currentRegion);
                         return result;
                     }
                     break;
@@ -213,7 +223,7 @@ USTATUS FfsBuilder::buildIntelImage(const UModelIndex & index, UByteArray & inte
                     region = model->header(currentRegion) + model->body(currentRegion);
                     break;
                 default:
-                    msg(UString("buildIntelImage: unknown region type"), currentRegion);
+                    msg(usprintf("%s: unknown region type %u", __FUNCTION__, regionType), currentRegion);
                     return U_UNKNOWN_ITEM_TYPE;
             }
             
@@ -225,11 +235,11 @@ USTATUS FfsBuilder::buildIntelImage(const UModelIndex & index, UByteArray & inte
         UINT32 newSize = (UINT32)intelImage.size();
         UINT32 oldSize = (UINT32)model->body(index).size();
         if (newSize > oldSize) {
-            msg(usprintf("buildIntelImage: new image size %Xh (%u) is bigger than the original %Xh (%u)", newSize, newSize, oldSize, oldSize), index);
+            msg(usprintf("%s: new image size %Xh (%u) is bigger than the original %Xh (%u)", __FUNCTION__, newSize, newSize, oldSize, oldSize), index);
             return U_INVALID_IMAGE;
         }
         else if (newSize < oldSize) {
-            msg(usprintf("buildIntelImage: new image size %Xh (%u) is smaller than the original %Xh (%u)", newSize, newSize, oldSize, oldSize), index);
+            msg(usprintf("%s: new image size %Xh (%u) is smaller than the original %Xh (%u)", __FUNCTION__, newSize, newSize, oldSize, oldSize), index);
             return U_INVALID_IMAGE;
         }
         
@@ -238,7 +248,7 @@ USTATUS FfsBuilder::buildIntelImage(const UModelIndex & index, UByteArray & inte
         return U_SUCCESS;
     }
     
-    msg(UString("buildIntelImage: unexpected action " + actionTypeToUString(model->action(index))), index);
+    msg(usprintf("%s: unexpected action ", __FUNCTION__) + actionTypeToUString(model->action(index)), index);
     return U_NOT_IMPLEMENTED;
 }
 
@@ -261,8 +271,12 @@ USTATUS FfsBuilder::buildRawArea(const UModelIndex & index, UByteArray & rawArea
     // Rebuild or Replace
     else if (model->action(index) == Actions::Rebuild
              || model->action(index) == Actions::Replace) {
+        // No need to rebuild a raw area with no children
+        if (model->rowCount(index) == 0) {
+            rawArea = model->body(index);
+        }
         // Rebuild if there is at least 1 child
-        if (model->rowCount(index)) {
+        else {
             // Clear the supplied UByteArray
             rawArea.clear();
             
@@ -280,12 +294,12 @@ USTATUS FfsBuilder::buildRawArea(const UModelIndex & index, UByteArray & rawArea
                     result = buildPadding(currentChild, currentData);
                 }
                 else {
-                    msg(UString("buildRawArea: unexpected item type ") + itemTypeToUString(model->type(currentChild)), currentChild);
+                    msg(usprintf("%s: unexpected item type ", __FUNCTION__) + itemTypeToUString(model->type(currentChild)), currentChild);
                     return U_UNKNOWN_ITEM_TYPE;
                 }
                 // Check build result
                 if (result) {
-                    msg(UString("buildRawArea: building of ") + model->name(currentChild) + UString(" failed with error ") + errorCodeToUString(result), currentChild);
+                    msg(usprintf("%s: building of ", __FUNCTION__) + model->name(currentChild) + UString(" failed with error ") + errorCodeToUString(result), currentChild);
                     return result;
                 }
                 // Append current data
@@ -296,17 +310,13 @@ USTATUS FfsBuilder::buildRawArea(const UModelIndex & index, UByteArray & rawArea
             UINT32 newSize = (UINT32)rawArea.size();
             UINT32 oldSize = (UINT32)model->body(index).size();
             if (newSize > oldSize) {
-                msg(usprintf("buildRawArea: new area size %Xh (%u) is bigger than the original %Xh (%u)", newSize, newSize, oldSize, oldSize), index);
+                msg(usprintf("%s: new area size %Xh (%u) is bigger than the original %Xh (%u)", __FUNCTION__, newSize, newSize, oldSize, oldSize), index);
                 return U_INVALID_RAW_AREA;
             }
             else if (newSize < oldSize) {
-                msg(usprintf("buildRawArea: new area size %Xh (%u) is smaller than the original %Xh (%u)", newSize, newSize, oldSize, oldSize), index);
+                msg(usprintf("%s: new area size %Xh (%u) is smaller than the original %Xh (%u)", __FUNCTION__, newSize, newSize, oldSize, oldSize), index);
                 return U_INVALID_RAW_AREA;
             }
-        }
-        // No need to rebuild a raw area with no children
-        else {
-            rawArea = model->body(index);
         }
         
         // Build successful, add header if needed
@@ -314,7 +324,7 @@ USTATUS FfsBuilder::buildRawArea(const UModelIndex & index, UByteArray & rawArea
         return U_SUCCESS;
     }
     
-    msg(UString("buildRawArea: unexpected action " + actionTypeToUString(model->action(index))), index);
+    msg(usprintf("%s: unexpected action ", __FUNCTION__) + actionTypeToUString(model->action(index)), index);
     return U_NOT_IMPLEMENTED;
 }
 
@@ -339,7 +349,7 @@ USTATUS FfsBuilder::buildPadding(const UModelIndex & index, UByteArray & padding
         return erase(index, padding);
     }
     
-    msg(UString("buildPadding: unexpected action " + actionTypeToUString(model->action(index))), index);
+    msg(usprintf("%s: unexpected action ", __FUNCTION__) + actionTypeToUString(model->action(index)), index);
     return U_NOT_IMPLEMENTED;
 }
 
@@ -365,8 +375,7 @@ USTATUS FfsBuilder::buildNonUefiData(const UModelIndex & index, UByteArray & dat
     }
     
     // TODO: rebuild properly
-    
-    msg(UString("buildNoUefiData: unexpected action " + actionTypeToUString(model->action(index))), index);
+    msg(usprintf("%s: unexpected action ", __FUNCTION__) + actionTypeToUString(model->action(index)), index);
     return U_NOT_IMPLEMENTED;
 }
 
